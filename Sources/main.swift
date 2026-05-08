@@ -14,9 +14,17 @@ struct TrackState: Codable {
     var updatedAt: Double
 }
 
+struct PlayerCommand: Codable {
+    var id: Int
+    var action: String
+    var value: Double?
+}
+
 final class SharedState {
     private let lock = NSLock()
     private var state: TrackState?
+    private var nextCommandId = 1
+    private var pendingCommands: [PlayerCommand] = []
 
     func update(_ newState: TrackState) {
         lock.lock()
@@ -29,6 +37,21 @@ final class SharedState {
         let copy = state
         lock.unlock()
         return copy
+    }
+
+    func enqueueCommand(action: String, value: Double? = nil) {
+        lock.lock()
+        pendingCommands.append(PlayerCommand(id: nextCommandId, action: action, value: value))
+        nextCommandId += 1
+        lock.unlock()
+    }
+
+    func drainCommands() -> [PlayerCommand] {
+        lock.lock()
+        let commands = pendingCommands
+        pendingCommands.removeAll()
+        lock.unlock()
+        return commands
     }
 }
 
@@ -126,6 +149,14 @@ final class LocalHTTPServer {
             return
         }
 
+        if requestLine.hasPrefix("GET /commands ") {
+            let commands = sharedState.drainCommands()
+            let data = (try? JSONEncoder().encode(commands)) ?? Data("[]".utf8)
+            let body = String(data: data, encoding: .utf8) ?? "[]"
+            respond(client, code: "200 OK", body: body)
+            return
+        }
+
         guard requestLine.hasPrefix("POST /state ") else {
             respond(client, code: "404 Not Found", body: "not found")
             return
@@ -155,7 +186,7 @@ final class LocalHTTPServer {
         let response = """
         HTTP/1.1 \(code)\r
         Access-Control-Allow-Origin: *\r
-        Access-Control-Allow-Methods: POST, OPTIONS\r
+        Access-Control-Allow-Methods: GET, POST, OPTIONS\r
         Access-Control-Allow-Headers: Content-Type\r
         Content-Type: application/json; charset=utf-8\r
         Content-Length: \(body.utf8.count)\r
@@ -203,11 +234,17 @@ final class IslandWindow: NSWindow {
     }
 }
 
+protocol IslandViewDelegate: AnyObject {
+    func islandViewDidRequestCommand(_ action: String, value: Double?)
+}
+
 final class IslandView: NSView {
+    weak var delegate: IslandViewDelegate?
     var state: TrackState?
     var albumImage: NSImage?
     private var lastAlbumUrl: String = ""
     private var phase: CGFloat = 0
+    private var buttonRects: [String: NSRect] = [:]
 
     override var isFlipped: Bool { true }
 
@@ -239,7 +276,7 @@ final class IslandView: NSView {
         context.clear(bounds)
 
         let visibleState = state
-        let active = visibleState?.isPlaying == true
+        let active = visibleState != nil
         let rect = active ? bounds.insetBy(dx: 0, dy: 0) : centeredSmallRect()
         drawIsland(in: rect, active: active)
 
@@ -253,6 +290,26 @@ final class IslandView: NSView {
         } else {
             drawCompact(state: state, in: rect)
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        for (action, rect) in buttonRects where rect.contains(point) {
+            switch action {
+            case "seekBackward":
+                delegate?.islandViewDidRequestCommand("seek", value: -10)
+            case "seekForward":
+                delegate?.islandViewDidRequestCommand("seek", value: 10)
+            default:
+                delegate?.islandViewDidRequestCommand(action, value: nil)
+            }
+            return
+        }
+        window?.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        window?.mouseDragged(with: event)
     }
 
     private func centeredSmallRect() -> NSRect {
@@ -282,14 +339,35 @@ final class IslandView: NSView {
     }
 
     private func drawExpanded(state: TrackState, in rect: NSRect) {
+        buttonRects.removeAll()
         drawArtwork(in: NSRect(x: rect.minX + 14, y: rect.minY + 14, width: 70, height: 70))
         drawText(clean(state.title), in: NSRect(x: 98, y: 16, width: 220, height: 20), font: .systemFont(ofSize: 15, weight: .semibold), color: .white)
         drawText(clean(state.artist), in: NSRect(x: 98, y: 38, width: 220, height: 16), font: .systemFont(ofSize: 11, weight: .medium), color: NSColor.white.withAlphaComponent(0.58))
-        drawProgress(state: state, in: NSRect(x: 98, y: 63, width: 210, height: 6))
-        drawWaveform(in: NSRect(x: 330, y: 18, width: 70, height: 52))
+        drawProgress(state: state, in: NSRect(x: 98, y: 60, width: 190, height: 5))
+        drawControls(isPlaying: state.isPlaying, y: 72)
+        drawWaveform(in: NSRect(x: 342, y: 20, width: 58, height: 46))
 
         let lyric = currentLyric(for: state)
-        drawText(lyric, in: NSRect(x: 98, y: 78, width: 292, height: 18), font: .systemFont(ofSize: 12, weight: .medium), color: NSColor(calibratedRed: 0.70, green: 0.88, blue: 1.0, alpha: 0.92))
+        drawText(lyric, in: NSRect(x: 98, y: 96, width: 292, height: 14), font: .systemFont(ofSize: 11, weight: .medium), color: NSColor(calibratedRed: 0.70, green: 0.88, blue: 1.0, alpha: 0.92))
+    }
+
+    private func drawControls(isPlaying: Bool, y: CGFloat) {
+        let specs: [(String, String, CGFloat)] = [
+            ("previous", "⏮", 98),
+            ("seekBackward", "-10", 132),
+            ("playPause", isPlaying ? "⏸" : "▶", 166),
+            ("seekForward", "+10", 200),
+            ("next", "⏭", 234)
+        ]
+
+        for (action, symbol, x) in specs {
+            let rect = NSRect(x: x, y: y, width: 26, height: 20)
+            buttonRects[action] = rect.insetBy(dx: -4, dy: -4)
+            let background = NSBezierPath(roundedRect: rect.insetBy(dx: -2, dy: -1), xRadius: 10, yRadius: 10)
+            NSColor.white.withAlphaComponent(action == "playPause" ? 0.14 : 0.07).setFill()
+            background.fill()
+            drawText(symbol, in: rect, font: .systemFont(ofSize: 13, weight: .semibold), color: NSColor.white.withAlphaComponent(0.9), alignment: .center)
+        }
     }
 
     private func drawArtwork(in rect: NSRect) {
@@ -365,7 +443,7 @@ final class IslandView: NSView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, IslandViewDelegate {
     private let sharedState = SharedState()
     private var server: LocalHTTPServer?
     private var window: IslandWindow?
@@ -378,6 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server = LocalHTTPServer(sharedState: sharedState)
         server?.start()
 
+        islandView.delegate = self
         let window = IslandWindow(contentView: islandView)
         self.window = window
         positionWindow(width: 420, height: 112)
@@ -386,6 +465,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             self?.refreshUI()
         }
+    }
+
+    func islandViewDidRequestCommand(_ action: String, value: Double?) {
+        sharedState.enqueueCommand(action: action, value: value)
     }
 
     private func refreshUI() {
@@ -400,7 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let active = fresh?.isPlaying == true
+        let active = fresh != nil
         let width: CGFloat = active ? 420 : 260
         let height: CGFloat = active ? 112 : 76
         positionWindow(width: width, height: height)

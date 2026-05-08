@@ -1,4 +1,5 @@
 const ENDPOINT = "http://127.0.0.1:47833/state";
+const COMMAND_ENDPOINT = "http://127.0.0.1:47833/commands";
 
 let lastPayload = "";
 
@@ -114,7 +115,6 @@ async function sendState() {
   };
 
   const serialized = JSON.stringify(payload);
-  if (serialized === lastPayload && !payload.isPlaying) return;
   lastPayload = serialized;
 
   try {
@@ -128,5 +128,66 @@ async function sendState() {
   }
 }
 
+function clickFirst(selectors) {
+  for (const selector of selectors) {
+    const node = document.querySelector(selector);
+    if (node) {
+      node.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+function applyCommand(command) {
+  const media = getMedia();
+  switch (command.action) {
+    case "playPause":
+      if (!clickFirst([
+        "ytmusic-player-bar .play-pause-button",
+        "ytmusic-player-bar tp-yt-paper-icon-button.play-pause-button",
+        "ytmusic-player-bar #play-pause-button"
+      ])) {
+        if (media?.paused) media.play();
+        else media?.pause();
+      }
+      break;
+    case "previous":
+      clickFirst([
+        "ytmusic-player-bar .previous-button",
+        "ytmusic-player-bar tp-yt-paper-icon-button.previous-button",
+        "ytmusic-player-bar #left-controls tp-yt-paper-icon-button:first-child"
+      ]);
+      break;
+    case "next":
+      clickFirst([
+        "ytmusic-player-bar .next-button",
+        "ytmusic-player-bar tp-yt-paper-icon-button.next-button",
+        "ytmusic-player-bar #left-controls tp-yt-paper-icon-button:last-child"
+      ]);
+      break;
+    case "seek":
+      if (media && Number.isFinite(command.value)) {
+        const duration = Number.isFinite(media.duration) ? media.duration : Infinity;
+        media.currentTime = Math.max(0, Math.min(duration, media.currentTime + command.value));
+      }
+      break;
+  }
+}
+
+async function pollCommands() {
+  try {
+    const response = await fetch(COMMAND_ENDPOINT);
+    if (!response.ok) return;
+    const commands = await response.json();
+    if (!Array.isArray(commands)) return;
+    for (const command of commands) applyCommand(command);
+  } catch (_) {
+    // The macOS visualizer is not running. Keep polling silently.
+  }
+}
+
 setInterval(sendState, 500);
+setInterval(pollCommands, 250);
 sendState();
+pollCommands();

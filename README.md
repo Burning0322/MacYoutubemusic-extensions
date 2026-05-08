@@ -33,6 +33,8 @@ If the island does not appear, reload the YouTube Music tab after loading the ex
 
 Drag the island with the mouse to move it. The app remembers the last position.
 
+Island buttons support previous, back 10 seconds, play/pause, forward 10 seconds, and next. The Chrome extension polls local commands from `127.0.0.1:47833` and applies them to the YouTube Music page.
+
 For lyrics, open the YouTube Music player page and switch to the `Lyrics` tab. YouTube Music only exposes lyrics to the extension when they are present in the page.
 
 ## Notes
