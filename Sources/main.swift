@@ -10,6 +10,7 @@ struct TrackState: Codable {
     var position: Double
     var duration: Double
     var lyricsLines: [String]
+    var lyricsStatus: String?
     var updatedAt: Double
 }
 
@@ -167,6 +168,10 @@ final class LocalHTTPServer {
 }
 
 final class IslandWindow: NSWindow {
+    private var dragStartMouseLocation: NSPoint = .zero
+    private var dragStartOrigin: NSPoint = .zero
+    private let originDefaultsKey = "YTMusicIslandWindowOrigin"
+
     init(contentView: NSView) {
         let rect = NSRect(x: 0, y: 0, width: 420, height: 112)
         super.init(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -176,7 +181,25 @@ final class IslandWindow: NSWindow {
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         hasShadow = true
-        ignoresMouseEvents = true
+        ignoresMouseEvents = false
+        acceptsMouseMovedEvents = true
+        isMovableByWindowBackground = true
+    }
+
+    override var canBecomeKey: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartMouseLocation = NSEvent.mouseLocation
+        dragStartOrigin = frame.origin
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let currentMouseLocation = NSEvent.mouseLocation
+        let deltaX = currentMouseLocation.x - dragStartMouseLocation.x
+        let deltaY = currentMouseLocation.y - dragStartMouseLocation.y
+        let newOrigin = NSPoint(x: dragStartOrigin.x + deltaX, y: dragStartOrigin.y + deltaY)
+        setFrameOrigin(newOrigin)
+        UserDefaults.standard.set(["x": newOrigin.x, "y": newOrigin.y], forKey: originDefaultsKey)
     }
 }
 
@@ -313,7 +336,12 @@ final class IslandView: NSView {
 
     private func currentLyric(for state: TrackState) -> String {
         let lines = state.lyricsLines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard !lines.isEmpty else { return "Lyrics will appear here when available" }
+        guard !lines.isEmpty else {
+            if state.lyricsStatus == "lyrics-tab-not-open" {
+                return "Open YouTube Music Lyrics to show synced lines"
+            }
+            return "Lyrics are not available for this track"
+        }
         guard state.duration > 0 else { return lines.first ?? "" }
         let index = Int((state.position / state.duration) * Double(lines.count))
         return lines[max(0, min(lines.count - 1, index))]
@@ -343,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: IslandWindow?
     private let islandView = IslandView(frame: NSRect(x: 0, y: 0, width: 420, height: 112))
     private var timer: Timer?
+    private var didInitialPosition = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -380,10 +409,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func positionWindow(width: CGFloat, height: CGFloat) {
         guard let screen = NSScreen.main, let window else { return }
-        let frame = screen.visibleFrame
-        let x = frame.midX - width / 2
-        let y = frame.maxY - height - 12
-        window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true, animate: true)
+        let visibleFrame = screen.visibleFrame
+
+        if !didInitialPosition {
+            if let saved = UserDefaults.standard.dictionary(forKey: "YTMusicIslandWindowOrigin"),
+               let savedX = saved["x"] as? CGFloat,
+               let savedY = saved["y"] as? CGFloat {
+                window.setFrame(NSRect(x: savedX, y: savedY, width: width, height: height), display: true, animate: false)
+            } else {
+                let x = visibleFrame.midX - width / 2
+                let y = visibleFrame.maxY - height - 12
+                window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true, animate: false)
+            }
+            didInitialPosition = true
+        } else if abs(window.frame.width - width) > 0.5 || abs(window.frame.height - height) > 0.5 {
+            let frame = window.frame
+            let x = frame.midX - width / 2
+            let y = frame.maxY - height
+            window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true, animate: true)
+        }
+
         islandView.frame = NSRect(x: 0, y: 0, width: width, height: height)
     }
 }

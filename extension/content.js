@@ -48,9 +48,10 @@ function getMedia() {
 function getLyricsLines() {
   const candidates = [
     "ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS']",
+    "ytmusic-player-page ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS']",
+    "ytmusic-player-page tp-yt-paper-tab[aria-selected='true'] ~ *",
     "ytmusic-description-shelf-renderer",
-    "ytmusic-player-page ytmusic-tab-renderer",
-    "#contents ytmusic-responsive-list-item-renderer"
+    "ytmusic-player-page ytmusic-tab-renderer"
   ];
 
   for (const selector of candidates) {
@@ -61,6 +62,13 @@ function getLyricsLines() {
   }
 
   return [];
+}
+
+function getLyricsStatus(lines) {
+  if (lines.length > 0) return "available";
+  const pageText = document.body?.innerText || "";
+  if (/Lyrics/i.test(pageText) || /歌词/.test(pageText)) return "lyrics-tab-not-open";
+  return "unavailable";
 }
 
 function normalizeLyrics(text) {
@@ -91,6 +99,7 @@ async function sendState() {
 
   if (!title && !media) return;
 
+  const lyricsLines = getLyricsLines();
   const payload = {
     source: "youtube-music",
     title,
@@ -99,7 +108,8 @@ async function sendState() {
     isPlaying: Boolean(media && !media.paused && !media.ended),
     position,
     duration,
-    lyricsLines: getLyricsLines(),
+    lyricsLines,
+    lyricsStatus: getLyricsStatus(lyricsLines),
     updatedAt: Date.now() / 1000
   };
 
