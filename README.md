@@ -29,6 +29,8 @@ The visualizer listens only on:
 
 Then open `https://music.youtube.com`, play a song, and the macOS island should appear near the top of the screen.
 
+If the island does not appear, reload the YouTube Music tab after loading the extension. Chrome only injects this extension into pages opened or refreshed after the extension is loaded.
+
 ## Notes
 
 - Lyrics are approximate. The extension reads visible YouTube Music lyric text and the app highlights a line based on playback progress.

@@ -153,7 +153,7 @@ final class LocalHTTPServer {
     private func respond(_ client: Int32, code: String, body: String) {
         let response = """
         HTTP/1.1 \(code)\r
-        Access-Control-Allow-Origin: https://music.youtube.com\r
+        Access-Control-Allow-Origin: *\r
         Access-Control-Allow-Methods: POST, OPTIONS\r
         Access-Control-Allow-Headers: Content-Type\r
         Content-Type: application/json; charset=utf-8\r
